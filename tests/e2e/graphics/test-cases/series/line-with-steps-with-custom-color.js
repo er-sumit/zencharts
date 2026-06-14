@@ -1,0 +1,15 @@
+function runTestCase(container) {
+	const chart = window.chart = ZenCharts.createChart(container, { layout: { attributionLogo: false } });
+
+	const mainSeries = chart.addSeries(ZenCharts.LineSeries, {
+		lineType: ZenCharts.LineType.WithSteps,
+	});
+
+	mainSeries.setData([
+		{ time: 1, value: 1, color: 'red' },
+		{ time: 2, value: 2, color: 'green' },
+		{ time: 3, value: 1, color: 'blue' },
+	]);
+
+	chart.timeScale().fitContent();
+}

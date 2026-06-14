@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0">
+        <title>Test case page</title>
+    </head>
+
+    <body style="padding: 0; margin: 0;">
+        <div id="container" style="position: absolute; width: 100%; height: 100%;"></div>
+
+        <!--
+            When emulating different devicePixelRatios within the e2e tests,
+            the resizeObserver will return the incorrect values for
+            devicePixelContentBox readings. This polyfill allows the tests
+            to be run correctly while DPCB support is enabled in the library.
+        -->
+        <script type="text/javascript">(function (global, factory) {
+    typeof exports === 'object' && typeof module !== 'undefined' ? factory(exports) :
+    typeof define === 'function' && define.amd ? define(['exports'], factory) :
+    (global = typeof globalThis !== 'undefined' ? globalThis : global || self, factory(global.ResizeObserverPolyfill = {}));
+})(this, (function (exports) { 'use strict';
+
+    var resizeObservers = [];
+
+    var hasActiveObservations = function () {
+        return resizeObservers.some(function (ro) { return ro.activeTargets.length > 0; });
+    };
+
+    var hasSkippedObservations = function () {
+        return resizeObservers.some(function (ro) { return ro.skippedTargets.length > 0; });
+    };
+
+    var msg = 'ResizeObserver loop completed with undelivered notifications.';
+    var deliverResizeLoopError = function () {
+        var event;
+        if (typeof ErrorEvent === 'function') {
+            event = new ErrorEvent('error', {
+                message: msg
+            });
+        }
+        else {
+            event = document.createEvent('Event');
+            event.initEvent('error', false, false);
+            event.message = msg;
+        }
+        window.dispatchEvent(event);
+    };
+
+    var ResizeObserverBoxOptions;
+    (function (ResizeObserverBoxOptions) {
+        ResizeObserverBoxOptions["BORDER_BOX"] = "border-box";
+        ResizeObserverBoxOptions["CONTENT_BOX"] = "content-box";
+        ResizeObserverBoxOptions["DEVICE_PIXEL_CONTENT_BOX"] = "device-pixel-content-box";
+    })(ResizeObserverBoxOptions || (ResizeObserverBoxOptions = {}));
+
+    var freeze = function (obj) { return Object.freeze(obj); };
+
+    var ResizeObserverSize = (function () {
+        function ResizeObserverSize(inlineSize, blockSize) {
+            this.inlineSize = inlineSize;
+            this.blockSize = blockSize;
+            freeze(this);
+        }
+        return ResizeObserverSize;
+    }());
+
+    var DOMRectReadOnly = (function () {
+        function DOMRectReadOnly(x, y, width, height) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.top = this.y;
+            this.left = this.x;
+            this.bottom = this.top + this.height;
+            this.right = this.left + this.width;
+            return freeze(this);
+        }
+        DOMRectReadOnly.prototype.toJSON = function () {
+            var _a = this, x = _a.x, y = _a.y, top = _a.top, right = _a.right, bottom = _a.bottom, left = _a.left, width = _a.width, height = _a.height;
+            return { x: x, y: y, top: top, right: right, bottom: bottom, left: left, width: width, height: height };
+        };
+        DOMRectReadOnly.fromRect = function (rectangle) {
+            return new DOMRectReadOnly(rectangle.x, rectangle.y, rectangle.width, rectangle.height);
+        };
+        return DOMRectReadOnly;
+    }());
+
+    var isSVG = function (target) { return target instanceof SVGElement && 'getBBox' in target; };
+    var isHidden = function (target) {
+        if (isSVG(target)) {
+            var _a = target.getBBox(), width = _a.width, height = _a.height;
+            return !width && !height;
+        }
+        var _b = target, offsetWidth = _b.offsetWidth, offsetHeight = _b.offsetHeight;
+        return !(offsetWidth || offsetHeight || target.getClientRects().length);
+    };
+    var isElement = function (obj) {
+        var _a;
+        if (obj instanceof Element) {
+            return true;
+        }
+        var scope = (_a = obj === null || obj === void 0 ? void 0 : obj.ownerDocument) === null || _a === void 0 ? void 0 : _a.defaultView;
+        return !!(scope && obj instanceof scope.Element);
+    };
+    var isReplacedElement = function (target) {
+        switch (target.tagName) {
+            case 'INPUT':
+                if (target.type !== 'image') {
+                    break;
+                }
+            case 'VIDEO':
+            case 'AUDIO':
+            case 'EMBED':
+            case 'OBJECT':
+            case 'CANVAS':
+            case 'IFRAME':
+            case 'IMG':
+                return true;
+        }
+        return false;
+    };
+
+    var global = typeof window !== 'undefined' ? window : {};
+
+    var cache = new WeakMap();
+    var scrollRegexp = /auto|scroll/;
+    var verticalRegexp = /^tb|vertical/;
+    var IE = (/msie|trident/i).test(global.navigator && global.navigator.userAgent);
+    var parseDimension = function (pixel) { return parseFloat(pixel || '0'); };
+    var size = function (inlineSize, blockSize, switchSizes) {
+        if (inlineSize === void 0) { inlineSize = 0; }
+        if (blockSize === void 0) { blockSize = 0; }
+        if (switchSizes === void 0) { switchSizes = false; }
+        return new ResizeObserverSize((switchSizes ? blockSize : inlineSize) || 0, (switchSizes ? inlineSize : blockSize) || 0);
+    };
+    var zeroBoxes = freeze({
+        devicePixelContentBoxSize: size(),
+        borderBoxSize: size(),
+        contentBoxSize: size(),
+        contentRect: new DOMRectReadOnly(0, 0, 0, 0)
+    });
+    var calculateBoxSizes = function (target, forceRecalculation) {
+        if (forceRecalculation === void 0) { forceRecalculation = false; }
+        if (cache.has(target) && !forceRecalculation) {
+            return cache.get(target);
+        }
+        if (isHidden(target)) {
+            cache.set(target, zeroBoxes);
+            return zeroBoxes;
+        }
+        var cs = getComputedStyle(target);
+        var svg = isSVG(target) && target.ownerSVGElement && target.getBBox();
+        var removePadding = !IE && cs.boxSizing === 'border-box';
+        var switchSizes = verticalRegexp.test(cs.writingMode || '');
+        var canScrollVertically = !svg && scrollRegexp.test(cs.overflowY || '');
+        var canScrollHorizontally = !svg && scrollRegexp.test(cs.overflowX || '');
+        var paddingTop = svg ? 0 : parseDimension(cs.paddingTop);
+        var paddingRight = svg ? 0 : parseDimension(cs.paddingRight);
+        var paddingBottom = svg ? 0 : parseDimension(cs.paddingBottom);
+        var paddingLeft = svg ? 0 : parseDimension(cs.paddingLeft);
+        var borderTop = svg ? 0 : parseDimension(cs.borderTopWidth);
+        var borderRight = svg ? 0 : parseDimension(cs.borderRightWidth);
+        var borderBottom = svg ? 0 : parseDimension(cs.borderBottomWidth);
+        var borderLeft = svg ? 0 : parseDimension(cs.borderLeftWidth);
+        var horizontalPadding = paddingLeft + paddingRight;
+        var verticalPadding = paddingTop + paddingBottom;
+        var horizontalBorderArea = borderLeft + borderRight;
+        var verticalBorderArea = borderTop + borderBottom;
+        var horizontalScrollbarThickness = !canScrollHorizontally ? 0 : target.offsetHeight - verticalBorderArea - target.clientHeight;
+        var verticalScrollbarThickness = !canScrollVertically ? 0 : target.offsetWidth - horizontalBorderArea - target.clientWidth;
+        var widthReduction = removePadding ? horizontalPadding + horizontalBorderArea : 0;
+        var heightReduction = removePadding ? verticalPadding + verticalBorderArea : 0;
+        var contentWidth = svg ? svg.width : parseDimension(cs.width) - widthReduction - verticalScrollbarThickness;
+        var contentHeight = svg ? svg.height : parseDimension(cs.height) - heightReduction - horizontalScrollbarThickness;
+        var borderBoxWidth = contentWidth + horizontalPadding + verticalScrollbarThickness + horizontalBorderArea;
+        var borderBoxHeight = contentHeight + verticalPadding + horizontalScrollbarThickness + verticalBorderArea;
+        var boxes = freeze({
+            devicePixelContentBoxSize: size(Math.round(contentWidth * devicePixelRatio), Math.round(contentHeight * devicePixelRatio), switchSizes),
+            borderBoxSize: size(borderBoxWidth, borderBoxHeight, switchSizes),
+            contentBoxSize: size(contentWidth, contentHeight, switchSizes),
+            contentRect: new DOMRectReadOnly(paddingLeft, paddingTop, contentWidth, contentHeight)
+        });
+        cache.set(target, boxes);
+        return boxes;
+    };
+    var calculateBoxSize = function (target, observedBox, forceRecalculation) {
+        var _a = calculateBoxSizes(target, forceRecalculation), borderBoxSize = _a.borderBoxSize, contentBoxSize = _a.contentBoxSize, devicePixelContentBoxSize = _a.devicePixelContentBoxSize;
+        switch (observedBox) {
+            case ResizeObserverBoxOptions.DEVICE_PIXEL_CONTENT_BOX:
+                return devicePixelContentBoxSize;
+            case ResizeObserverBoxOptions.BORDER_BOX:
+                return borderBoxSize;
+            default:
+                return contentBoxSize;
+        }
+    };
+
+    var ResizeObserverEntry = (function () {
+        function ResizeObserverEntry(target) {
+            var boxes = calculateBoxSizes(target);
+            this.target = target;
+            this.contentRect = boxes.contentRect;
+            this.borderBoxSize = freeze([boxes.borderBoxSize]);
+            this.contentBoxSize = freeze([boxes.contentBoxSize]);
+            this.devicePixelContentBoxSize = freeze([boxes.devicePixelContentBoxSize]);
+        }
+        return ResizeObserverEntry;
+    }());
+
+    var calculateDepthForNode = function (node) {
+        if (isHidden(node)) {
+            return Infinity;
+        }
+        var depth = 0;
+        var parent = node.parentNode;
+        while (parent) {
+            depth += 1;
+            parent = parent.parentNode;
+        }
+        return depth;
+    };
+
+    var broadcastActiveObservations = function () {
+        var shallowestDepth = Infinity;
+        var callbacks = [];
+        resizeObservers.forEach(function processObserver(ro) {
+            if (ro.activeTargets.length === 0) {
+                return;
+            }
+            var entries = [];
+            ro.activeTargets.forEach(function processTarget(ot) {
+                var entry = new ResizeObserverEntry(ot.target);
+                var targetDepth = calculateDepthForNode(ot.target);
+                entries.push(entry);
+                ot.lastReportedSize = calculateBoxSize(ot.target, ot.observedBox);
+                if (targetDepth < shallowestDepth) {
+                    shallowestDepth = targetDepth;
+                }
+            });
+            callbacks.push(function resizeObserverCallback() {
+                ro.callback.call(ro.observer, entries, ro.observer);
+            });
+            ro.activeTargets.splice(0, ro.activeTargets.length);
+        });
+        for (var _i = 0, callbacks_1 = callbacks; _i < callbacks_1.length; _i++) {
+            var callback = callbacks_1[_i];
+            callback();
+        }
+        return shallowestDepth;
+    };
+
+    var gatherActiveObservationsAtDepth = function (depth) {
+        resizeObservers.forEach(function processObserver(ro) {
+            ro.activeTargets.splice(0, ro.activeTargets.length);
+            ro.skippedTargets.splice(0, ro.skippedTargets.length);
+            ro.observationTargets.forEach(function processTarget(ot) {
+                if (ot.isActive()) {
+                    if (calculateDepthForNode(ot.target) > depth) {
+                        ro.activeTargets.push(ot);
+                    }
+                    else {
+                        ro.skippedTargets.push(ot);
+                    }
+                }
+            });
+        });
+    };
+
+    var process = function () {
+        var depth = 0;
+        gatherActiveObservationsAtDepth(depth);
+        while (hasActiveObservations()) {
+            depth = broadcastActiveObservations();
+            gatherActiveObservationsAtDepth(depth);
+        }
+        if (hasSkippedObservations()) {
+            deliverResizeLoopError();
+        }
+        return depth > 0;
+    };
+
+    var trigger;
+    var callbacks = [];
+    var notify = function () { return callbacks.splice(0).forEach(function (cb) { return cb(); }); };
+    var queueMicroTask = function (callback) {
+        if (!trigger) {
+            var toggle_1 = 0;
+            var el_1 = document.createTextNode('');
+            var config = { characterData: true };
+            new MutationObserver(function () { return notify(); }).observe(el_1, config);
+            trigger = function () { el_1.textContent = "".concat(toggle_1 ? toggle_1-- : toggle_1++); };
+        }
+        callbacks.push(callback);
+        trigger();
+    };
+
+    var queueResizeObserver = function (cb) {
+        queueMicroTask(function ResizeObserver() {
+            requestAnimationFrame(cb);
+        });
+    };
+
+    var watching = 0;
+    var isWatching = function () { return !!watching; };
+    var CATCH_PERIOD = 250;
+    var observerConfig = { attributes: true, characterData: true, childList: true, subtree: true };
+    var events = [
+        'resize',
+        'load',
+        'transitionend',
+        'animationend',
+        'animationstart',
+        'animationiteration',
+        'keyup',
+        'keydown',
+        'mouseup',
+        'mousedown',
+        'mouseover',
+        'mouseout',
+        'blur',
+        'focus'
+    ];
+    var time = function (timeout) {
+        if (timeout === void 0) { timeout = 0; }
+        return Date.now() + timeout;
+    };
+    var scheduled = false;
+    var Scheduler = (function () {
+        function Scheduler() {
+            var _this = this;
+            this.stopped = true;
+            this.listener = function () { return _this.schedule(); };
+        }
+        Scheduler.prototype.run = function (timeout) {
+            var _this = this;
+            if (timeout === void 0) { timeout = CATCH_PERIOD; }
+            if (scheduled) {
+                return;
+            }
+            scheduled = true;
+            var until = time(timeout);
+            queueResizeObserver(function () {
+                var elementsHaveResized = false;
+                try {
+                    elementsHaveResized = process();
+                }
+                finally {
+                    scheduled = false;
+                    timeout = until - time();
+                    if (!isWatching()) {
+                        return;
+                    }
+                    if (elementsHaveResized) {
+                        _this.run(1000);
+                    }
+                    else if (timeout > 0) {
+                        _this.run(timeout);
+                    }
+                    else {
+                        _this.start();
+                    }
+                }
+            });
+        };
+        Scheduler.prototype.schedule = function () {
+            this.stop();
+            this.run();
+        };
+        Scheduler.prototype.observe = function () {
+            var _this = this;
+            var cb = function () { return _this.observer && _this.observer.observe(document.body, observerConfig); };
+            document.body ? cb() : global.addEventListener('DOMContentLoaded', cb);
+        };
+        Scheduler.prototype.start = function () {
+            var _this = this;
+            if (this.stopped) {
+                this.stopped = false;
+                this.observer = new MutationObserver(this.listener);
+                this.observe();
+                events.forEach(function (name) { return global.addEventListener(name, _this.listener, true); });
+            }
+        };
+        Scheduler.prototype.stop = function () {
+            var _this = this;
+            if (!this.stopped) {
+                this.observer && this.observer.disconnect();
+                events.forEach(function (name) { return global.removeEventListener(name, _this.listener, true); });
+                this.stopped = true;
+            }
+        };
+        return Scheduler;
+    }());
+    var scheduler = new Scheduler();
+    var updateCount = function (n) {
+        !watching && n > 0 && scheduler.start();
+        watching += n;
+        !watching && scheduler.stop();
+    };
+
+    var skipNotifyOnElement = function (target) {
+        return !isSVG(target)
+            && !isReplacedElement(target)
+            && getComputedStyle(target).display === 'inline';
+    };
+    var ResizeObservation = (function () {
+        function ResizeObservation(target, observedBox) {
+            this.target = target;
+            this.observedBox = observedBox || ResizeObserverBoxOptions.CONTENT_BOX;
+            this.lastReportedSize = {
+                inlineSize: 0,
+                blockSize: 0
+            };
+        }
+        ResizeObservation.prototype.isActive = function () {
+            var size = calculateBoxSize(this.target, this.observedBox, true);
+            if (skipNotifyOnElement(this.target)) {
+                this.lastReportedSize = size;
+            }
+            if (this.lastReportedSize.inlineSize !== size.inlineSize
+                || this.lastReportedSize.blockSize !== size.blockSize) {
+                return true;
+            }
+            return false;
+        };
+        return ResizeObservation;
+    }());
+
+    var ResizeObserverDetail = (function () {
+        function ResizeObserverDetail(resizeObserver, callback) {
+            this.activeTargets = [];
+            this.skippedTargets = [];
+            this.observationTargets = [];
+            this.observer = resizeObserver;
+            this.callback = callback;
+        }
+        return ResizeObserverDetail;
+    }());
+
+    var observerMap = new WeakMap();
+    var getObservationIndex = function (observationTargets, target) {
+        for (var i = 0; i < observationTargets.length; i += 1) {
+            if (observationTargets[i].target === target) {
+                return i;
+            }
+        }
+        return -1;
+    };
+    var ResizeObserverController = (function () {
+        function ResizeObserverController() {
+        }
+        ResizeObserverController.connect = function (resizeObserver, callback) {
+            var detail = new ResizeObserverDetail(resizeObserver, callback);
+            observerMap.set(resizeObserver, detail);
+        };
+        ResizeObserverController.observe = function (resizeObserver, target, options) {
+            var detail = observerMap.get(resizeObserver);
+            var firstObservation = detail.observationTargets.length === 0;
+            if (getObservationIndex(detail.observationTargets, target) < 0) {
+                firstObservation && resizeObservers.push(detail);
+                detail.observationTargets.push(new ResizeObservation(target, options && options.box));
+                updateCount(1);
+                scheduler.schedule();
+            }
+        };
+        ResizeObserverController.unobserve = function (resizeObserver, target) {
+            var detail = observerMap.get(resizeObserver);
+            var index = getObservationIndex(detail.observationTargets, target);
+            var lastObservation = detail.observationTargets.length === 1;
+            if (index >= 0) {
+                lastObservation && resizeObservers.splice(resizeObservers.indexOf(detail), 1);
+                detail.observationTargets.splice(index, 1);
+                updateCount(-1);
+            }
+        };
+        ResizeObserverController.disconnect = function (resizeObserver) {
+            var _this = this;
+            var detail = observerMap.get(resizeObserver);
+            detail.observationTargets.slice().forEach(function (ot) { return _this.unobserve(resizeObserver, ot.target); });
+            detail.activeTargets.splice(0, detail.activeTargets.length);
+        };
+        return ResizeObserverController;
+    }());
+
+    var ResizeObserver = (function () {
+        function ResizeObserver(callback) {
+            if (arguments.length === 0) {
+                throw new TypeError("Failed to construct 'ResizeObserver': 1 argument required, but only 0 present.");
+            }
+            if (typeof callback !== 'function') {
+                throw new TypeError("Failed to construct 'ResizeObserver': The callback provided as parameter 1 is not a function.");
+            }
+            ResizeObserverController.connect(this, callback);
+        }
+        ResizeObserver.prototype.observe = function (target, options) {
+            if (arguments.length === 0) {
+                throw new TypeError("Failed to execute 'observe' on 'ResizeObserver': 1 argument required, but only 0 present.");
+            }
+            if (!isElement(target)) {
+                throw new TypeError("Failed to execute 'observe' on 'ResizeObserver': parameter 1 is not of type 'Element");
+            }
+            ResizeObserverController.observe(this, target, options);
+        };
+        ResizeObserver.prototype.unobserve = function (target) {
+            if (arguments.length === 0) {
+                throw new TypeError("Failed to execute 'unobserve' on 'ResizeObserver': 1 argument required, but only 0 present.");
+            }
+            if (!isElement(target)) {
+                throw new TypeError("Failed to execute 'unobserve' on 'ResizeObserver': parameter 1 is not of type 'Element");
+            }
+            ResizeObserverController.unobserve(this, target);
+        };
+        ResizeObserver.prototype.disconnect = function () {
+            ResizeObserverController.disconnect(this);
+        };
+        ResizeObserver.toString = function () {
+            return 'function ResizeObserver () { [polyfill code] }';
+        };
+        return ResizeObserver;
+    }());
+
+    exports.ResizeObserver = ResizeObserver;
+    exports.ResizeObserverEntry = ResizeObserverEntry;
+    exports.ResizeObserverSize = ResizeObserverSize;
+
+    Object.defineProperty(exports, '__esModule', { value: true });
+
+}));
+; window.ResizeObserver = window.ResizeObserverPolyfill.ResizeObserver</script>
+
+        <script type="text/javascript" src="PATH_TO_STANDALONE_MODULE"></script>
+
+        <script type="text/javascript">
+            /* eslint-disable max-classes-per-file */
+class VolumeProfileRenderer {
+	constructor(data) {
+		this._data = data;
+	}
+	draw(target) {
+		target.useBitmapCoordinateSpace(scope => {
+			const ctx = scope.context;
+			const scaledX = Math.round(this._data.x * scope.horizontalPixelRatio);
+			const scaledTop = Math.round(this._data.top * scope.verticalPixelRatio);
+			const scaledWidth = Math.round(this._data.width * scope.horizontalPixelRatio);
+			const scaledHeight = Math.round(this._data.columnHeight * this._data.items.length * scope.verticalPixelRatio);
+
+			const scaledRowHeight = Math.round(this._data.columnHeight * scope.verticalPixelRatio);
+
+			ctx.fillStyle = 'rgba(0, 0, 255, 0.2)';
+			ctx.fillRect(scaledX, scaledTop, scaledWidth, -scaledHeight);
+
+			ctx.fillStyle = 'rgba(80, 80, 255, 0.8)';
+			this._data.items.forEach(row => {
+				ctx.fillRect(scaledX, Math.round(row.y * scope.verticalPixelRatio), Math.round(row.width * scope.horizontalPixelRatio), 1 - scaledRowHeight);
+			});
+		});
+	}
+}
+
+class VolumeProfilePaneView {
+	constructor(source) {
+		this._source = source;
+	}
+	update() {
+		const data = this._source._vpData;
+		const series = this._source._series;
+		const timeScale = this._source._chart.timeScale();
+		this._x = timeScale.timeToCoordinate(data.time);
+		this._width = timeScale.options().barSpacing;
+
+		const y1 = series.priceToCoordinate(data.profile[0].price);
+		const y2 = series.priceToCoordinate(data.profile[1].price);
+		this._columnHeight = Math.max(1, y1 - y2);
+		const maxVolume = data.profile.reduce((acc, item) => Math.max(acc, item.vol), 0);
+
+		this._top = y1;
+
+		this._items = data.profile.map(row => ({
+			y: series.priceToCoordinate(row.price),
+			width: this._width * row.vol / maxVolume,
+		}));
+	}
+
+	renderer() {
+		return new VolumeProfileRenderer({
+			x: this._x,
+			top: this._top,
+			columnHeight: this._columnHeight,
+			width: this._width,
+			items: this._items,
+		});
+	}
+}
+
+class VolumeProfile {
+	// points - {date, price}
+	constructor(chart, series, vpData) {
+		this._chart = chart;
+		this._series = series;
+		this._vpData = vpData;
+		this._paneViews = [new VolumeProfilePaneView(this)];
+	}
+	updateAllViews() {
+		this._paneViews.forEach(pw => pw.update());
+	}
+	priceAxisViews() {
+		return [];
+	}
+	timeAxisViews() {
+		return [];
+	}
+	paneViews() {
+		return this._paneViews;
+	}
+}
+
+class VertLinePaneRenderer {
+	constructor(x) {
+		this._x = x;
+	}
+	draw(target) {
+		target.useBitmapCoordinateSpace(scope => {
+			const ctx = scope.context;
+			const xScaled = Math.round(this._x * scope.horizontalPixelRatio) + 0.5;
+			ctx.strokeStyle = 'red';
+			ctx.lineWidth = 3;
+			ctx.beginPath();
+			ctx.moveTo(xScaled, 0);
+			ctx.lineTo(xScaled, scope.bitmapSize.height);
+			ctx.stroke();
+		});
+	}
+}
+
+class VertLinePaneView {
+	constructor(source) {
+		this._source = source;
+	}
+	update() {
+		const timeScale = this._source._chart.timeScale();
+		this._x = timeScale.timeToCoordinate(this._source._time);
+	}
+	renderer() {
+		return new VertLinePaneRenderer(this._x);
+	}
+}
+
+class VertLineTimeAxisView {
+	constructor(source) {
+		this._source = source;
+	}
+	update() {
+		const timeScale = this._source._chart.timeScale();
+		this._x = timeScale.timeToCoordinate(this._source._time);
+	}
+	coordinate() {
+		return this._x;
+	}
+	text() {
+		return this._source._time;
+	}
+	textColor() {
+		return 'white';
+	}
+	backColor() {
+		return 'green';
+	}
+}
+
+class VertLine {
+	// points - {date, price}
+	constructor(chart, series, time) {
+		this._chart = chart;
+		this._series = series;
+		this._time = time;
+		this._paneViews = [new VertLinePaneView(this)];
+		this._timeAxisViews = [new VertLineTimeAxisView(this)];
+	}
+	updateAllViews() {
+		this._paneViews.forEach(pw => pw.update());
+		this._timeAxisViews.forEach(tw => tw.update());
+	}
+	priceAxisViews() {
+		return [];
+	}
+	timeAxisViews() {
+		return this._timeAxisViews;
+	}
+	paneViews() {
+		return this._paneViews;
+	}
+}
+
+class TrendLinePaneRenderer {
+	constructor(p1, p2, text) {
+		this._p1 = p1;
+		this._p2 = p2;
+		this._text = text;
+	}
+	draw(target) {
+		target.useBitmapCoordinateSpace(scope => {
+			const ctx = scope.context;
+			const x1Scaled = Math.round(this._p1.x * scope.horizontalPixelRatio);
+			const y1Scaled = Math.round(this._p1.y * scope.verticalPixelRatio);
+			const x2Scaled = Math.round(this._p2.x * scope.horizontalPixelRatio);
+			const y2Scaled = Math.round(this._p2.y * scope.verticalPixelRatio);
+			ctx.lineWidth = 2;
+			ctx.strokeStyle = 'blue';
+			ctx.beginPath();
+			ctx.moveTo(x1Scaled, y1Scaled);
+			ctx.lineTo(x2Scaled, y2Scaled);
+			ctx.stroke();
+			ctx.font = '24px Arial';
+			ctx.fillStyle = 'green';
+			ctx.fillText(this._text, x2Scaled, y2Scaled);
+		});
+	}
+}
+class TrendLinePaneView {
+	constructor(source) {
+		this._source = source;
+	}
+	update() {
+		const series = this._source._series;
+		const y1 = series.priceToCoordinate(this._source._p1.price);
+		const y2 = series.priceToCoordinate(this._source._p2.price);
+		const timeScale = this._source._chart.timeScale();
+		const x1 = timeScale.timeToCoordinate(this._source._p1.time);
+		const x2 = timeScale.timeToCoordinate(this._source._p2.time);
+		this._p1 = { x: x1, y: y1 };
+		this._p2 = { x: x2, y: y2 };
+	}
+	renderer() {
+		return new TrendLinePaneRenderer(this._p1, this._p2, '' + this._source._p2.price);
+	}
+}
+class TrendLine {
+	// points - {date, price}
+	constructor(chart, series, p1, p2) {
+		this._chart = chart;
+		this._series = series;
+		this._p1 = p1;
+		this._p2 = p2;
+		this._paneViews = [new TrendLinePaneView(this)];
+	}
+	updateAllViews() {
+		this._paneViews.forEach(pw => pw.update());
+	}
+	priceAxisViews() {
+		return [];
+	}
+	timeAxisViews() {
+		return [];
+	}
+	paneViews() {
+		return this._paneViews;
+	}
+}
+
+class RectanglePaneRenderer {
+	constructor(p1, p2) {
+		this._p1 = p1;
+		this._p2 = p2;
+	}
+	draw(target) {
+		target.useBitmapCoordinateSpace(scope => {
+			const ctx = scope.context;
+			const x1Scaled = Math.round(this._p1.x * scope.horizontalPixelRatio);
+			const y1Scaled = Math.round(this._p1.y * scope.verticalPixelRatio);
+			const x2Scaled = Math.round(this._p2.x * scope.horizontalPixelRatio);
+			const y2Scaled = Math.round(this._p2.y * scope.verticalPixelRatio);
+			const width = x2Scaled - x1Scaled + 1;
+			const height = y2Scaled - y1Scaled + 1;
+			ctx.fillStyle = 'rgba(0, 0, 255, 0.5)';
+			ctx.fillRect(x1Scaled, y1Scaled, width, height);
+		});
+	}
+}
+
+class RectanglePaneView {
+	constructor(source) {
+		this._source = source;
+	}
+	update() {
+		const series = this._source._series;
+		const y1 = series.priceToCoordinate(this._source._p1.price);
+		const y2 = series.priceToCoordinate(this._source._p2.price);
+		const timeScale = this._source._chart.timeScale();
+		const x1 = timeScale.timeToCoordinate(this._source._p1.time);
+		const x2 = timeScale.timeToCoordinate(this._source._p2.time);
+		this._p1 = { x: x1, y: y1 };
+		this._p2 = { x: x2, y: y2 };
+	}
+	renderer(height, width) {
+		return new RectanglePaneRenderer(this._p1, this._p2, this._source._color);
+	}
+}
+
+class RectangleTimeAxisView {
+	constructor(source, p) {
+		this._source = source;
+		this._p = p;
+	}
+	update() {
+		const timeScale = this._source._chart.timeScale();
+		this._x = timeScale.timeToCoordinate(this._p.time);
+	}
+	coordinate() {
+		return this._x;
+	}
+	text() {
+		return this._p.time;
+	}
+	textColor() {
+		return 'white';
+	}
+	backColor() {
+		return 'blue';
+	}
+}
+
+class RectanglePriceAxisView {
+	constructor(source, p) {
+		this._source = source;
+		this._p = p;
+	}
+	update() {
+		const series = this._source._series;
+		this._y = series.priceToCoordinate(this._p.price);
+	}
+	coordinate() {
+		return this._y;
+	}
+	text() {
+		return '' + this._p.price;
+	}
+	textColor() {
+		return 'white';
+	}
+	backColor() {
+		return 'blue';
+	}
+}
+
+class Rectangle {
+	// points - {date, price}
+	constructor(chart, series, p1, p2, color) {
+		this._chart = chart;
+		this._series = series;
+		this._p1 = p1;
+		this._p2 = p2;
+		this._color = color;
+		this._paneViews = [new RectanglePaneView(this)];
+		this._timeAxisViews = [new RectangleTimeAxisView(this, p1), new RectangleTimeAxisView(this, p2)];
+		this._priceAxisViews = [new RectanglePriceAxisView(this, p1), new RectanglePriceAxisView(this, p2)];
+	}
+	updateAllViews() {
+		this._paneViews.forEach(pw => pw.update());
+		this._timeAxisViews.forEach(pw => pw.update());
+		this._priceAxisViews.forEach(pw => pw.update());
+	}
+	priceAxisViews() {
+		return this._priceAxisViews;
+	}
+	timeAxisViews() {
+		return this._timeAxisViews;
+	}
+	paneViews() {
+		return this._paneViews;
+	}
+}
+
+class AnchoredTextRenderer {
+	constructor(data) {
+		this._data = data;
+	}
+	draw(target) {
+		target.useBitmapCoordinateSpace(scope => {
+			const ctx = scope.context;
+			ctx.save();
+			ctx.font = this._data.font;
+			const textWidth = ctx.measureText(this._data.text).width;
+			ctx.scale(scope.horizontalPixelRatio, scope.verticalPixelRatio);
+			const horzMargin = 20;
+			let x = horzMargin;
+			const width = scope.mediaSize.width;
+			const height = scope.mediaSize.height;
+			switch (this._data.horzAlign) {
+				case 'right': {
+					x = width - horzMargin - textWidth;
+					break;
+				}
+				case 'middle': {
+					x = (width - textWidth / 2);
+					break;
+				}
+			}
+			const vertMargin = 10;
+			let y = vertMargin + this._data.lineHeight;
+			switch (this._data.vertAlign) {
+				case 'middle': {
+					y = (height - this._data.lineHeight) / 2;
+					break;
+				}
+				case 'bottom': {
+					y = height - vertMargin;
+					break;
+				}
+			}
+			ctx.fillStyle = this._data.color;
+			ctx.fillText(this._data.text, x, y);
+			ctx.restore();
+		});
+	}
+}
+
+class AnchoredTextPaneView {
+	constructor(source) {
+		this._source = source;
+	}
+	update() {}
+	renderer() {
+		return new AnchoredTextRenderer(this._source._data);
+	}
+}
+
+class AnchoredText {
+	constructor(chart, series, data) {
+		this._chart = chart;
+		this._series = series;
+		this._data = data;
+		this._paneViews = [new AnchoredTextPaneView(this)];
+	}
+	updateAllViews() {
+		this._paneViews.forEach(pw => pw.update());
+	}
+	priceAxisViews() {
+		return [];
+	}
+	timeAxisViews() {
+		return [];
+	}
+	paneViews() {
+		return this._paneViews;
+	}
+}
+
+function runTestCase(container) {
+	const chart = window.chart = ZenCharts.createChart(container, { layout: { attributionLogo: false } });
+
+	chart.timeScale().applyOptions({
+		barSpacing: 50,
+		rightOffset: 5,
+	});
+	const s1 = chart.addSeries(ZenCharts.LineSeries, {
+		color: 'red',
+	});
+	s1.setData([
+		{ time: '2019-04-11', value: 80.01 },
+		{ time: '2019-04-12', value: 96.63 },
+		{ time: '2019-04-13', value: 76.64 },
+		{ time: '2019-04-14', value: 81.89 },
+		{ time: '2019-04-15', value: 74.43 },
+		{ time: '2019-04-16', value: 80.01 },
+	]);
+
+	const rect = new Rectangle(chart, s1, { time: '2019-04-11', price: 70.01 }, { time: '2019-04-16', price: 90.01 });
+	s1.attachPrimitive(rect);
+
+	const trend = new TrendLine(chart, s1, { time: '2019-04-11', price: 70.01 }, { time: '2019-04-16', price: 90.01 }, 'trend');
+	s1.attachPrimitive(trend);
+
+	const vert = new VertLine(chart, s1, '2019-04-14');
+	s1.attachPrimitive(vert);
+
+	const vpData = {
+		time: '2019-04-12',
+		profile: [
+			{
+				price: 90,
+				vol: 4,
+			},
+			{
+				price: 91,
+				vol: 7,
+			},
+			{
+				price: 92,
+				vol: 7,
+			},
+			{
+				price: 93,
+				vol: 11,
+			},
+			{
+				price: 94,
+				vol: 17,
+			},
+			{
+				price: 95,
+				vol: 15,
+			},
+			{
+				price: 96,
+				vol: 10,
+			},
+			{
+				price: 97,
+				vol: 13,
+			},
+			{
+				price: 98,
+				vol: 1,
+			},
+			{
+				price: 99,
+				vol: 6,
+			},
+		],
+	};
+	const vp = new VolumeProfile(chart, s1, vpData);
+	s1.attachPrimitive(vp);
+
+	const anchoredText = new AnchoredText(chart, s1, {
+		vertAlign: 'top',
+		horzAlign: 'right',
+		text: 'My Text',
+		lineHeight: 54,
+		font: 'italic bold 54px Arial',
+		color: 'red',
+	});
+	s1.attachPrimitive(anchoredText);
+}
+
+        </script>
+
+        <script type="text/javascript">
+            window.BUILD_MODE = 'development';
+            window.testCaseReady = Promise.resolve(runTestCase(document.getElementById('container')));
+        </script>
+    </body>
+</html>
