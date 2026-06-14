@@ -725,7 +725,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 				const updated = this.drawings.map(d => {
 					if (d.id === this._draggedDrawingId) {
 						const points = [...d.points];
-						if (d.type === 'rotated_rectangle') {
+						if (d.type === 'rotated_rectangle' || d.type === 'parallel_channel') {
 							const p1 = d.points[0];
 							const p2 = d.points[1];
 							const p3 = d.points[2];

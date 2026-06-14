@@ -628,7 +628,7 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
 				} else {
 					finalCoords = [];
 				}
-			} else if (type === 'rotated_rectangle') {
+			} else if (type === 'rotated_rectangle' || type === 'parallel_channel') {
 				if (coords.length >= 3) {
 					const hp1 = coords[0];
 					const hp2 = coords[1];
