@@ -144,14 +144,6 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 			this._primitive.updateAllViews();
 		}
 
-		// Clear existing measure drawings when selecting another tool
-		const hasMeasure = this.drawings.some(d => d.type === 'measure');
-		if (hasMeasure) {
-			this._primitive.drawings = this._primitive.drawings.filter(d => d.type !== 'measure');
-			this._primitive.updateAllViews();
-			this._notifyChange();
-		}
-
 		if (tool) {
 			this._deselectAll();
 			this._disableChartNavigation();
@@ -420,14 +412,6 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 	}
 
 	private _handleChartClick = (param: MouseEventParams) => {
-		// Clear any existing measure drawings on next click if no tool is active
-		if (!this._activeTool) {
-			const hasMeasure = this.drawings.some(d => d.type === 'measure');
-			if (hasMeasure) {
-				const updated = this.drawings.filter(d => d.type !== 'measure');
-				this.setDrawings(updated);
-			}
-		}
 
 		const clickTime = this._crosshairTime || param.time;
 		if (!this._activeTool || !param.point || !clickTime || this._crosshairPrice === null) return;
