@@ -38,9 +38,18 @@ export { createImageWatermark } from './plugins/image-watermark/primitive';
 export { createSeriesMarkers } from './plugins/series-markers/wrapper';
 export { createUpDownMarkers } from './plugins/up-down-markers-plugin/wrapper';
 
+/*
+	Drawing Tools
+*/
+export { DrawingManager } from './tools/drawing/DrawingManager';
+export type { DrawingStatePayload } from './tools/drawing/DrawingManager';
+export { DrawingPrimitive } from './tools/drawing/DrawingPrimitive';
+export type { Drawing, DrawingOptions, DrawingPoint } from './tools/drawing/DrawingPrimitive';
+
 /**
  * Returns the current version as a string. For example `'3.3.0'`.
  */
 export function version(): string {
 	return process.env.BUILD_VERSION;
 }
+

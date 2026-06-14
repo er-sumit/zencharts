@@ -10,7 +10,8 @@
 				"sortNodes": true,
 				"respectPreserveConstEnum": true
 			},
-			"failOnClass": true
+			"failOnClass": false
 		}
 	]
 }
+

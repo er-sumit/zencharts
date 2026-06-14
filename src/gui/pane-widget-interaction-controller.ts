@@ -26,14 +26,29 @@ interface StartScrollPosition extends Point {
 	localY: Coordinate;
 }
 
+export interface IDrawingInteractionDelegate {
+	mouseDownEvent(event: MouseEventHandlerMouseEvent): boolean;
+	mouseMoveEvent(event: MouseEventHandlerMouseEvent): boolean;
+	mouseUpEvent(event: MouseEventHandlerMouseEvent): boolean;
+	pressedMouseMoveEvent(event: MouseEventHandlerMouseEvent): boolean;
+
+	touchStartEvent(event: MouseEventHandlerTouchEvent): boolean;
+	touchMoveEvent(event: MouseEventHandlerTouchEvent): boolean;
+	touchEndEvent(event: MouseEventHandlerTouchEvent): boolean;
+
+	keyDownEvent(event: KeyboardEvent): boolean;
+}
+
 export interface IPaneWidgetInteractionDelegate {
 	chart(): IChartWidgetBase;
 	state(): Pane | null;
 	size(): { width: number; height: number };
+	canvasElement(): HTMLCanvasElement;
 }
 
 export class PaneWidgetInteractionController implements MouseEventHandlers {
 	private readonly _delegate: IPaneWidgetInteractionDelegate;
+	private _drawingDelegate: IDrawingInteractionDelegate | null = null;
 
 	private _startScrollingPos: StartScrollPosition | null = null;
 	private _isScrolling: boolean = false;
@@ -49,6 +64,17 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 
 	public constructor(delegate: IPaneWidgetInteractionDelegate) {
 		this._delegate = delegate;
+	}
+
+	public setDrawingDelegate(delegate: IDrawingInteractionDelegate | null): void {
+		this._drawingDelegate = delegate;
+	}
+
+	public keyDownEvent(event: KeyboardEvent): boolean {
+		if (this._drawingDelegate) {
+			return this._drawingDelegate.keyDownEvent(event);
+		}
+		return false;
 	}
 
 	public clicked(): ISubscription<TimePointIndex | null, Point, TouchMouseEventData> {
@@ -75,6 +101,9 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 
 	public mouseDownEvent(event: MouseEventHandlerMouseEvent): void {
 		this._onMouseEvent();
+		if (this._drawingDelegate && this._drawingDelegate.mouseDownEvent(event)) {
+			return;
+		}
 		this._mouseTouchDownEvent();
 		this._setCrosshairPosition(event.localX, event.localY, event);
 	}
@@ -84,6 +113,9 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 			return;
 		}
 		this._onMouseEvent();
+		if (this._drawingDelegate) {
+			this._drawingDelegate.mouseMoveEvent(event);
+		}
 		const x = event.localX;
 		const y = event.localY;
 		this._setCrosshairPosition(x, y, event);
@@ -111,6 +143,9 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 
 	public pressedMouseMoveEvent(event: MouseEventHandlerMouseEvent): void {
 		this._onMouseEvent();
+		if (this._drawingDelegate && this._drawingDelegate.pressedMouseMoveEvent(event)) {
+			return;
+		}
 		this._pressedMouseTouchMoveEvent(event);
 		this._setCrosshairPosition(event.localX, event.localY, event);
 	}
@@ -122,6 +157,10 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 		this._onMouseEvent();
 
 		this._longTap = false;
+
+		if (this._drawingDelegate && this._drawingDelegate.mouseUpEvent(event)) {
+			return;
+		}
 
 		this._endScroll(event);
 	}
@@ -172,6 +211,10 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 		this._longTap = false;
 		this._exitTrackingModeOnNextTry = this._startTrackPoint !== null;
 
+		if (this._drawingDelegate && this._drawingDelegate.touchStartEvent(event)) {
+			return;
+		}
+
 		this._mouseTouchDownEvent();
 
 		const crosshair = this._model().crosshairSource();
@@ -188,6 +231,11 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 
 		const x = event.localX;
 		const y = event.localY;
+
+		if (this._drawingDelegate && this._drawingDelegate.touchMoveEvent(event)) {
+			return;
+		}
+
 		if (this._startTrackPoint !== null) {
 			// tracking mode: move crosshair
 			this._exitTrackingModeOnNextTry = false;
@@ -205,6 +253,12 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 		if (this._chart().options().trackingMode.exitMode === TrackingModeExitMode.OnTouchEnd) {
 			this._exitTrackingModeOnNextTry = true;
 		}
+
+		if (this._drawingDelegate && this._drawingDelegate.touchEndEvent(event)) {
+			this._tryExitTrackingMode();
+			return;
+		}
+
 		this._tryExitTrackingMode();
 		this._endScroll(event);
 	}
@@ -297,7 +351,12 @@ export class PaneWidgetInteractionController implements MouseEventHandlers {
 
 		this._model().stopTimeScaleAnimation();
 
-		if (document.activeElement !== document.body && document.activeElement !== document.documentElement) {
+		const canvas = this._delegate.canvasElement();
+		if (
+			document.activeElement !== document.body &&
+			document.activeElement !== document.documentElement &&
+			document.activeElement !== canvas
+		) {
 			// If any focusable element except the page itself is focused, remove the focus
 			(ensureNotNull(document.activeElement) as HTMLElement).blur();
 		} else {
