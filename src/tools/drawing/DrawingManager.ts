@@ -938,6 +938,13 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 	}
 
 	public touchStartEvent(event: MouseEventHandlerTouchEvent): boolean {
+		if (event.touches && event.touches.length > 1) {
+			// Multi-touch active. Abort any drawing drag state and let pinch-zoom take over.
+			this._dragMode = null;
+			this._draggedDrawingId = null;
+			return false;
+		}
+
 		this._isTouchActive = true;
 		this._inTouchFlow = true;
 		try {
@@ -953,6 +960,12 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 	}
 
 	public touchMoveEvent(event: MouseEventHandlerTouchEvent): boolean {
+		if (event.touches && event.touches.length > 1) {
+			this._dragMode = null;
+			this._draggedDrawingId = null;
+			return false;
+		}
+
 		this._isTouchActive = true;
 		this._inTouchFlow = true;
 		try {

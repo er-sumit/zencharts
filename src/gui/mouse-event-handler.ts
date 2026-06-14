@@ -47,6 +47,8 @@ export interface MouseEventHandlerEventBase extends TouchMouseEventData {
 	target: MouseEvent['target'];
 	view: MouseEvent['view'];
 
+	touches?: TouchList;
+
 	preventDefault(): void;
 }
 
@@ -821,6 +823,7 @@ export class MouseEventHandler implements IDestroyable {
 
 			target: eventLike.target,
 			view: event.view,
+			touches: (event as TouchEvent).touches,
 
 			preventDefault: () => {
 				if (event.type !== 'touchstart') {

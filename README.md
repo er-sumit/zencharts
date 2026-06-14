@@ -14,6 +14,17 @@ Zen Charts is a high-performance, lightweight financial charting library, built 
 - **O(log N) Rendering Lookup**: Replaced linear coordinate search loops with optimized binary searches during the rendering phase, dramatically improving performance.
 - **Market Gap Interpolation**: Drawing coordinates smoothly map across weekend gaps, exchange holidays, and missing session bars without geometric distortion.
 
+## v0.2.2 Parallel Channel Stability
+- **Geometric Hit-Testing**: Hooked `parallel_channel` into the full orthogonal projection pipeline, granting 6 exact geometric interactive handles.
+- **Midpoint Resizing**: Enabled native midpoint dragging for symmetric channel-width resizing without skewing baseline angles.
+
+## v0.2.3 Magnet Stability
+- **Raw Pointer Decoupling**: Magnet mode body-dragging now calculates continuous movement deltas against raw pointer coordinates instead of snapping targets.
+- **Post-Transform Rigid Snapping**: The entire shape translates smoothly and gracefully snaps as an atomic rigid body when an anchor nears an OHLC target, eliminating chaotic teleportation.
+
+## v0.2.4 Stability Complete
+- **Persistent Geometric Lifecycle**: The Measure tool is now a first-class geometric citizen, persisting through pans, zooms, and tool-switches, and only removing itself upon explicit deletion.
+
 ## Installation
 
 Install using npm:
