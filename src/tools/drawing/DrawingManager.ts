@@ -25,6 +25,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 
 	private _crosshairTime: Time | null = null;
 	private _crosshairPrice: number | null = null;
+	private _rawCrosshairPrice: number | null = null;
 
 	// Dragging state
 	private _dragMode: DragMode = null;
@@ -346,6 +347,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 			}
 
 			let price = this._series.coordinateToPrice(param.point.y);
+			this._rawCrosshairPrice = price;
 			if (price !== null) {
 				if (this._magnetMode !== 'off' && this._crosshairTime && this._seriesData.length > 0) {
 					const candle = this._seriesData.find(d => d.time === this._crosshairTime);
@@ -375,6 +377,8 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 					}
 				}
 				this._crosshairPrice = price;
+			} else {
+				this._rawCrosshairPrice = null;
 			}
 
 			// Update drawing preview while placing
@@ -615,7 +619,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 					this._disableChartNavigation();
 					this._updateCursor();
 
-					if (this._crosshairTime !== null && this._crosshairPrice !== null) {
+					if (this._crosshairTime !== null && this._rawCrosshairPrice !== null) {
 						const cursorLogical = this._timeToLogical(this._crosshairTime);
 						const cursorTimeNum = this._timeToNumber(this._crosshairTime);
 						this._bodyDragOffsets = targetDrawing.points.map(p => {
@@ -624,13 +628,13 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 								return {
 									useLogical: true,
 									dLogical: pLogical - cursorLogical,
-									dPrice: p.price - this._crosshairPrice!
+									dPrice: p.price - this._rawCrosshairPrice!
 								};
 							} else {
 								return {
 									useLogical: false,
 									dTime: this._timeToNumber(p.time) - cursorTimeNum,
-									dPrice: p.price - this._crosshairPrice!
+									dPrice: p.price - this._rawCrosshairPrice!
 								};
 							}
 						});
@@ -857,33 +861,38 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 				this.setDrawings(updated);
 			}
 		} else if (this._dragMode === 'body' && this._draggedDrawingId !== null) {
-			if (this._crosshairTime !== null && this._crosshairPrice !== null) {
+			if (this._crosshairTime !== null && this._rawCrosshairPrice !== null) {
 				const cursorLogical = this._timeToLogical(this._crosshairTime);
 				const cursorTimeNum = this._timeToNumber(this._crosshairTime);
 				const updated = this.drawings.map(d => {
 					if (d.id === this._draggedDrawingId) {
-						const points = d.points.map((p, i) => {
+						let rawPoints = d.points.map((p, i) => {
 							const offset = this._bodyDragOffsets[i];
 							if (!offset) return p;
 
 							if (offset.useLogical && offset.dLogical !== undefined && cursorLogical !== null) {
 								const newLogical = cursorLogical + offset.dLogical;
 								const newTime = this._logicalToTime(newLogical);
-								const newPrice = this._crosshairPrice! + offset.dPrice;
+								const newPrice = this._rawCrosshairPrice! + offset.dPrice;
 								return {
 									time: newTime || p.time,
 									price: newPrice
 								};
 							} else {
 								const newTimeNum = cursorTimeNum + (offset.dTime || 0);
-								const newPrice = this._crosshairPrice! + offset.dPrice;
+								const newPrice = this._rawCrosshairPrice! + offset.dPrice;
 								return {
 									time: this._numberToTime(newTimeNum, p.time),
 									price: newPrice
 								};
 							}
 						});
-						const newD = { ...d, points };
+
+						if (this._magnetMode !== 'off') {
+							rawPoints = this._applyMagnetToBody(rawPoints);
+						}
+
+						const newD = { ...d, points: rawPoints };
 						if (d.type === 'measure') {
 							this._updateMeasureText(newD);
 						}
@@ -987,6 +996,73 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 		} finally {
 			this._inTouchFlow = false;
 		}
+	}
+
+	private _getMagnetSnapForPoint(p: DrawingPoint): number | null {
+		if (this._magnetMode === 'off' || this._seriesData.length === 0) return null;
+		
+		let candle = this._seriesData.find(d => d.time === p.time);
+		if (!candle) {
+			const pTimeNum = this._timeToNumber(p.time);
+			let minTimeDiff = Infinity;
+			for (const d of this._seriesData) {
+				const diff = Math.abs(this._timeToNumber(d.time) - pTimeNum);
+				if (diff < minTimeDiff) {
+					minTimeDiff = diff;
+					candle = d;
+				}
+			}
+		}
+
+		if (!candle) return null;
+
+		const prices = [candle.open, candle.high, candle.low, candle.close];
+		let closest = prices[0];
+		let minDist = Math.abs(p.price - closest);
+		for (let i = 1; i < prices.length; i++) {
+			const dist = Math.abs(p.price - prices[i]);
+			if (dist < minDist) {
+				minDist = dist;
+				closest = prices[i];
+			}
+		}
+
+		if (this._magnetMode === 'strong') {
+			return closest;
+		} else if (this._magnetMode === 'weak') {
+			const pY = this._series.priceToCoordinate(p.price);
+			const closestY = this._series.priceToCoordinate(closest);
+			if (pY !== null && closestY !== null) {
+				if (Math.abs(pY - closestY) <= this._weakMagnetThresholdPx) {
+					return closest;
+				}
+			}
+		}
+		return null;
+	}
+
+	private _applyMagnetToBody(rawPoints: DrawingPoint[]): DrawingPoint[] {
+		let bestDelta = 0;
+		let minAbsDelta = Infinity;
+
+		for (const p of rawPoints) {
+			const snappedPrice = this._getMagnetSnapForPoint(p);
+			if (snappedPrice !== null) {
+				const delta = snappedPrice - p.price;
+				if (Math.abs(delta) < minAbsDelta) {
+					minAbsDelta = Math.abs(delta);
+					bestDelta = delta;
+				}
+			}
+		}
+
+		if (minAbsDelta !== Infinity && minAbsDelta !== 0) {
+			return rawPoints.map(p => ({
+				time: p.time,
+				price: p.price + bestDelta
+			}));
+		}
+		return rawPoints;
 	}
 
 	public keyDownEvent(event: KeyboardEvent): boolean {
