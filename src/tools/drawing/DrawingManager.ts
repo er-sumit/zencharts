@@ -44,6 +44,8 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 	private _inTouchFlow = false;
 	private _seriesData: any[] = [];
 	private _hoveredDrawingId: string | null = null;
+	private _lastBrushScreenPoint: { x: number, y: number } | null = null;
+	private _suppressToolCreation = false;
 
 	private _chartElement: HTMLElement;
 
@@ -134,6 +136,15 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 	}
 
 	public setTool(tool: string | null) {
+		if (this._isLocked && tool !== null) {
+			this._activeTool = null;
+			this._notifyToolChange();
+			return;
+		}
+
+		if (this._activeTool === 'measure' && tool !== 'measure') {
+			this._deselectAll();
+		}
 		this._activeTool = tool;
 
 		// Cancel any in-progress drawing
@@ -414,6 +425,10 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 	private _handleChartClick = (param: MouseEventParams) => {
 
 		const clickTime = this._crosshairTime || param.time;
+		if (this._suppressToolCreation) {
+			this._suppressToolCreation = false;
+			return;
+		}
 		if (!this._activeTool || !param.point || !clickTime || this._crosshairPrice === null) return;
 
 		const clickPoint: DrawingPoint = {
@@ -538,25 +553,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 		}
 		this._updateCurrentTimeAndPrice(event.localX, event.localY);
 
-		if (this._activeTool) {
-			if (this._activeTool === 'brush' && !this._currentDrawing) {
-				if (this._crosshairTime && this._crosshairPrice !== null) {
-					const newDrawing: Drawing = {
-						id: Math.random().toString(36).substring(2, 9),
-						type: 'brush',
-						points: [{ time: this._crosshairTime, price: this._crosshairPrice }],
-						options: {
-							lineColor: '#ef5350',
-							width: 3
-						}
-					};
-					this._currentDrawing = newDrawing;
-					this._primitive.drawings.push(newDrawing);
-					this._primitive.updateAllViews();
-				}
-			}
-			return true;
-		}
+		const isDrawingMidway = this._activeTool && this._currentDrawing && this._activeTool !== 'brush';
 
 		const mouseX = event.localX;
 		const mouseY = event.localY;
@@ -623,6 +620,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 							}
 						});
 					}
+					if (!isDrawingMidway) this._suppressToolCreation = true;
 					return true;
 				}
 
@@ -631,6 +629,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 				this._draggedPointIndex = ptIdx;
 				this._disableChartNavigation();
 				this._updateCursor();
+				if (!isDrawingMidway) this._suppressToolCreation = true;
 				return true;
 			}
 		}
@@ -658,7 +657,8 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 				return d;
 			});
 			if (changed) {
-				this.setDrawings(updated);
+				this.drawings = updated;
+				this._primitive.updateAllViews();
 			}
 
 			if (!this._isLocked && !hitDrawing.options.locked) {
@@ -668,7 +668,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 				this._disableChartNavigation();
 				this._updateCursor();
 
-				if (this._crosshairTime !== null && this._crosshairPrice !== null) {
+				if (this._crosshairTime !== null && this._rawCrosshairPrice !== null) {
 					const cursorLogical = this._timeToLogical(this._crosshairTime);
 					const cursorTimeNum = this._timeToNumber(this._crosshairTime);
 					this._bodyDragOffsets = hitDrawing.points.map(p => {
@@ -677,18 +677,20 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 							return {
 								useLogical: true,
 								dLogical: pLogical - cursorLogical,
-								dPrice: p.price - this._crosshairPrice!
+								dPrice: p.price - this._rawCrosshairPrice!
 							};
 						} else {
 							return {
 								useLogical: false,
 								dTime: this._timeToNumber(p.time) - cursorTimeNum,
-								dPrice: p.price - this._crosshairPrice!
+								dPrice: p.price - this._rawCrosshairPrice!
 							};
 						}
 					});
 				}
 			}
+
+			if (!isDrawingMidway) this._suppressToolCreation = true;
 			return true;
 		} else {
 			this._deselectAll();
@@ -901,10 +903,21 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 		if (this._activeTool) {
 			if (this._activeTool === 'brush' && this._currentDrawing) {
 				if (this._crosshairTime && this._crosshairPrice !== null) {
-					const points = [...this._currentDrawing.points];
-					points.push({ time: this._crosshairTime, price: this._crosshairPrice });
-					this._currentDrawing.points = points;
-					this._primitive.updateAllViews();
+					let shouldAdd = true;
+					if (this._lastBrushScreenPoint) {
+						const dx = event.localX - this._lastBrushScreenPoint.x;
+						const dy = event.localY - this._lastBrushScreenPoint.y;
+						if (Math.sqrt(dx * dx + dy * dy) < 5) {
+							shouldAdd = false;
+						}
+					}
+					if (shouldAdd) {
+						const points = [...this._currentDrawing.points];
+						points.push({ time: this._crosshairTime, price: this._crosshairPrice });
+						this._currentDrawing.points = points;
+						this._primitive.updateAllViews();
+						this._lastBrushScreenPoint = { x: event.localX, y: event.localY };
+					}
 				}
 			}
 			return true;
@@ -931,6 +944,7 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 		// Finalize brush drawing on mouse up
 		if (this._activeTool === 'brush' && this._currentDrawing) {
 			this._finalizeDrawing();
+			this._lastBrushScreenPoint = null;
 			consumed = true;
 		}
 
@@ -1309,8 +1323,8 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 			case 'short_position': {
 				const targetY = p2.y;
 				const stopY = pts[2] ? pts[2].y : p1.y + (p1.y - p2.y);
-				const xMin = Math.min(p1.x, p2.x);
-				const xMax = Math.max(p1.x, p2.x);
+				const xMin = Math.min(p1.x, p2.x, pts[2] ? pts[2].x : p1.x);
+				const xMax = Math.max(p1.x, p2.x, pts[2] ? pts[2].x : p2.x);
 				const w = Math.max(xMax - xMin, 20);
 
 				const nearEntry = Math.abs(mouseY - p1.y) < HIT_RADIUS && mouseX >= xMin && mouseX <= xMin + w;

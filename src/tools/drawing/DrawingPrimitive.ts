@@ -391,8 +391,8 @@ class DrawingPaneRenderer implements IPrimitivePaneRenderer {
 				const targetY = p2.y;
 				const stopY = p3 ? p3.y : p1.y + (p1.y - p2.y);
 
-				const xMin = Math.min(p1.x, p2.x);
-				const xMax = Math.max(p1.x, p2.x);
+				const xMin = Math.min(p1.x, p2.x, p3 ? p3.x : p1.x);
+				const xMax = Math.max(p1.x, p2.x, p3 ? p3.x : p2.x);
 				const w = Math.max(xMax - xMin, 20); // enforce min width
 
 				// Profit Box
