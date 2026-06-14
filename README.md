@@ -9,6 +9,11 @@ Zen Charts is a high-performance, lightweight financial charting library, built 
 - **Customizable**: Extensive API for customizing colors, grids, price scales, and crosshairs.
 - **Plugin System**: Robust Plugin architecture to build custom drawing tools and overlays directly onto the chart's rendering context.
 
+## v0.2.1 Stability Baseline
+- **Fractional Logical Coordinates**: Sub-bar fractional coordinates seamlessly support geometric drag operations without integer snapping.
+- **O(log N) Rendering Lookup**: Replaced linear coordinate search loops with optimized binary searches during the rendering phase, dramatically improving performance.
+- **Market Gap Interpolation**: Drawing coordinates smoothly map across weekend gaps, exchange holidays, and missing session bars without geometric distortion.
+
 ## Installation
 
 Install using npm:

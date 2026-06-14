@@ -735,16 +735,32 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
 			if (diff === 0) return null;
 			logicalIndex = (targetTimeNum - firstTimeNum) / diff;
 		} else {
-			let bestIndex = 0;
-			let minDiff = Infinity;
-			for (let i = 0; i < this.seriesData.length; i++) {
-				const diff = Math.abs(this._timeToNumber(this.seriesData[i].time) - targetTimeNum);
-				if (diff < minDiff) {
-					minDiff = diff;
-					bestIndex = i;
+			let left = 0;
+			let right = lastIndex;
+
+			while (left <= right) {
+				const mid = Math.floor((left + right) / 2);
+				const midTime = this._timeToNumber(this.seriesData[mid].time);
+				if (midTime === targetTimeNum) {
+					logicalIndex = mid;
+					break;
+				} else if (midTime < targetTimeNum) {
+					left = mid + 1;
+				} else {
+					right = mid - 1;
 				}
 			}
-			logicalIndex = bestIndex;
+
+			if (left > right) {
+				const t1 = this._timeToNumber(this.seriesData[right].time);
+				const t2 = this._timeToNumber(this.seriesData[left].time);
+				const diff = t2 - t1;
+				if (diff === 0) {
+					logicalIndex = right;
+				} else {
+					logicalIndex = right + (targetTimeNum - t1) / diff;
+				}
+			}
 		}
 
 		return timeScale.logicalToCoordinate(logicalIndex as any);

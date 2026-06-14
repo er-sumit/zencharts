@@ -1294,22 +1294,31 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 	private _logicalToTime(logical: number): Time | null {
 		if (!this._seriesData || this._seriesData.length < 2) return null;
 		const lastIndex = this._seriesData.length - 1;
-		const rounded = Math.round(logical);
 
-		if (rounded >= 0 && rounded <= lastIndex) {
-			return this._seriesData[rounded].time;
+		const floor = Math.floor(logical);
+		const ceil = Math.ceil(logical);
+		const fraction = logical - floor;
+
+		if (logical >= 0 && logical <= lastIndex) {
+			if (floor === ceil) return this._seriesData[floor].time;
+			const t1 = this._timeToNumber(this._seriesData[floor].time);
+			const t2 = this._timeToNumber(this._seriesData[ceil].time);
+			const interpolated = t1 + (t2 - t1) * fraction;
+			return this._numberToTime(interpolated, this._seriesData[floor].time);
 		}
 
 		const lastTimeNum = this._timeToNumber(this._seriesData[lastIndex].time);
 		const prevTimeNum = this._timeToNumber(this._seriesData[lastIndex - 1].time);
-		const diff = lastTimeNum - prevTimeNum;
+		const diffEnd = lastTimeNum - prevTimeNum;
 
-		if (rounded > lastIndex) {
-			const targetTimeNum = lastTimeNum + (rounded - lastIndex) * diff;
+		if (logical > lastIndex) {
+			const targetTimeNum = lastTimeNum + (logical - lastIndex) * diffEnd;
 			return this._numberToTime(targetTimeNum, this._seriesData[lastIndex].time);
 		} else {
 			const firstTimeNum = this._timeToNumber(this._seriesData[0].time);
-			const targetTimeNum = firstTimeNum + rounded * diff;
+			const secondTimeNum = this._timeToNumber(this._seriesData[1].time);
+			const diffStart = secondTimeNum - firstTimeNum;
+			const targetTimeNum = firstTimeNum + logical * diffStart;
 			return this._numberToTime(targetTimeNum, this._seriesData[0].time);
 		}
 	}
@@ -1334,16 +1343,18 @@ export class DrawingManager implements IDrawingInteractionDelegate {
 			if (diff === 0) return null;
 			return (targetTimeNum - firstTimeNum) / diff;
 		} else {
-			let bestIndex = 0;
-			let minDiff = Infinity;
-			for (let i = 0; i < this._seriesData.length; i++) {
-				const diff = Math.abs(this._timeToNumber(this._seriesData[i].time) - targetTimeNum);
-				if (diff < minDiff) {
-					minDiff = diff;
-					bestIndex = i;
+			for (let i = 0; i < this._seriesData.length - 1; i++) {
+				const t1 = this._timeToNumber(this._seriesData[i].time);
+				const t2 = this._timeToNumber(this._seriesData[i + 1].time);
+				const minT = Math.min(t1, t2);
+				const maxT = Math.max(t1, t2);
+				if (targetTimeNum >= minT && targetTimeNum <= maxT) {
+					const diff = t2 - t1;
+					if (diff === 0) return i;
+					return i + (targetTimeNum - t1) / diff;
 				}
 			}
-			return bestIndex;
+			return lastIndex;
 		}
 	}
 
