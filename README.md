@@ -93,3 +93,4 @@ While ZenCharts `v1.0.0-rc1` guarantees fundamental geometric stability, upcomin
 
 Zen Charts is licensed under the Apache License 2.0.
 Inspired by TradingView Lightweight Charts. See the LICENSE and NOTICE files for details.
+
